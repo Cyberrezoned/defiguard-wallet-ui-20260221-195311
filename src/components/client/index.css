@@ -1,0 +1,16 @@
+.carousel-indicators li {
+    position: relative;
+    -ms-flex: 0 1 auto;
+    flex: 0 1 auto;
+    /* width: 30px; */
+    /* height: 3px; */
+    margin-right: 3px;
+    margin-left: 3px;
+    text-indent: -999px;
+    /* background-color: rgba(255, 255, 255, .5); */
+}
+
+ol.carousel-indicators {
+    position: relative;
+    top: 500px;
+}
