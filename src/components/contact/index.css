@@ -1,0 +1,12 @@
+.send_bt a {
+    width: 100%;
+    text-align: center;
+    font-size: 18px;
+    color: #fefefd !important;
+    background-color: #252525;
+    padding: 10px;
+    text-transform: uppercase;
+    display: block;
+    font-weight: bold;
+    border-radius: 5px;
+}

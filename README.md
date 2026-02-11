@@ -74,3 +74,5 @@ This section has moved here: [https://facebook.github.io/create-react-app/docs/t
 ➡ Enable sending and receiving ETH functionalities. 
 
 **Note: The purpose of this exercise is to understand how you approach problem solving your method, focus, and time management rather than achieving a perfect result. Just aim to do as much as possible in 30 minutes.**
+
+
