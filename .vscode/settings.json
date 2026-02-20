@@ -45,5 +45,8 @@
       "linux": "Default Shell",
       "osx": "Default Shell"
     }
+  },
+  "workbench.editor.autoLockGroups": {
+    "workbench.editor.chatSession": true
   }
 }

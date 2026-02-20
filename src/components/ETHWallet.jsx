@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import QRCode from "qrcode";
 import "./ETHWallet.css";
 
 const MARKET_REFRESH_MS = 30000;
@@ -29,7 +30,7 @@ const formatPercent = (value) => {
   return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
 };
 
-const formatEthAmount = (value) => {
+const formatNativeAmount = (value) => {
   const parsed = Number(value);
   if (Number.isNaN(parsed)) {
     return "0";
@@ -56,25 +57,6 @@ const isValidAddress = (address) => {
   } catch {
     return false;
   }
-};
-
-const makeQRPattern = (address) => {
-  const size = 13;
-  const cells = [];
-  const seed = (address || "0x0").replace("0x", "") || "0";
-
-  for (let i = 0; i < size * size; i += 1) {
-    const hex = parseInt(seed[i % seed.length], 16);
-    const row = Math.floor(i / size);
-    const col = i % size;
-    const inFinder =
-      (row < 4 && col < 4) ||
-      (row < 4 && col > size - 5) ||
-      (row > size - 5 && col < 4);
-    cells.push(inFinder || hex > 7);
-  }
-
-  return cells;
 };
 
 const sparklineBars = (points, bars = 16) => {
@@ -106,31 +88,117 @@ const sparklineBars = (points, bars = 16) => {
   });
 };
 
+const CHAIN_CONFIG = {
+  1: {
+    name: "Ethereum Mainnet",
+    symbol: "ETH",
+    explorer: "https://etherscan.io",
+    testnet: false,
+  },
+  5: {
+    name: "Goerli",
+    symbol: "ETH",
+    explorer: "https://goerli.etherscan.io",
+    testnet: true,
+  },
+  10: {
+    name: "Optimism",
+    symbol: "ETH",
+    explorer: "https://optimistic.etherscan.io",
+    testnet: false,
+  },
+  56: {
+    name: "BNB Smart Chain",
+    symbol: "BNB",
+    explorer: "https://bscscan.com",
+    testnet: false,
+  },
+  97: {
+    name: "BSC Testnet",
+    symbol: "tBNB",
+    explorer: "https://testnet.bscscan.com",
+    testnet: true,
+  },
+  137: {
+    name: "Polygon",
+    symbol: "POL",
+    explorer: "https://polygonscan.com",
+    testnet: false,
+  },
+  80002: {
+    name: "Polygon Amoy",
+    symbol: "POL",
+    explorer: "https://amoy.polygonscan.com",
+    testnet: true,
+  },
+  8453: {
+    name: "Base",
+    symbol: "ETH",
+    explorer: "https://basescan.org",
+    testnet: false,
+  },
+  84532: {
+    name: "Base Sepolia",
+    symbol: "ETH",
+    explorer: "https://sepolia.basescan.org",
+    testnet: true,
+  },
+  42161: {
+    name: "Arbitrum One",
+    symbol: "ETH",
+    explorer: "https://arbiscan.io",
+    testnet: false,
+  },
+  421614: {
+    name: "Arbitrum Sepolia",
+    symbol: "ETH",
+    explorer: "https://sepolia.arbiscan.io",
+    testnet: true,
+  },
+  43114: {
+    name: "Avalanche C-Chain",
+    symbol: "AVAX",
+    explorer: "https://snowtrace.io",
+    testnet: false,
+  },
+  43113: {
+    name: "Avalanche Fuji",
+    symbol: "AVAX",
+    explorer: "https://testnet.snowtrace.io",
+    testnet: true,
+  },
+  11155111: {
+    name: "Sepolia",
+    symbol: "ETH",
+    explorer: "https://sepolia.etherscan.io",
+    testnet: true,
+  },
+  11155420: {
+    name: "Optimism Sepolia",
+    symbol: "ETH",
+    explorer: "https://sepolia-optimism.etherscan.io",
+    testnet: true,
+  },
+  17000: {
+    name: "Holesky",
+    symbol: "ETH",
+    explorer: "https://holesky.etherscan.io",
+    testnet: true,
+  },
+};
+
+const getChainConfig = (id) => CHAIN_CONFIG[id] || null;
+
 const getExplorerBase = (id) => {
-  const map = {
-    1: "https://etherscan.io",
-    5: "https://goerli.etherscan.io",
-    10: "https://optimistic.etherscan.io",
-    56: "https://bscscan.com",
-    137: "https://polygonscan.com",
-    8453: "https://basescan.org",
-    11155111: "https://sepolia.etherscan.io",
-  };
-  return map[id] || "https://etherscan.io";
+  return getChainConfig(id)?.explorer || "https://etherscan.io";
 };
 
 const getNetworkName = (id) => {
-  const map = {
-    1: "Ethereum Mainnet",
-    5: "Goerli",
-    10: "Optimism",
-    56: "BSC",
-    137: "Polygon",
-    8453: "Base",
-    11155111: "Sepolia",
-  };
-  return map[id] || `Chain ${id}`;
+  return getChainConfig(id)?.name || `Chain ${id}`;
 };
+
+const getNativeCurrencySymbol = (id) => getChainConfig(id)?.symbol || "ETH";
+const isTestnetChain = (id) => Boolean(getChainConfig(id)?.testnet);
 
 const MARKET_ENDPOINT =
   "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=ethereum,bitcoin,solana,avalanche-2&order=market_cap_desc&per_page=4&page=1&sparkline=true&price_change_percentage=24h";
@@ -158,6 +226,8 @@ export default function ETHWallet() {
   const [copied, setCopied] = useState(false);
   const [addrError, setAddrError] = useState(false);
   const [amtError, setAmtError] = useState(false);
+  const [receiveQrDataUrl, setReceiveQrDataUrl] = useState("");
+  const [qrError, setQrError] = useState("");
 
   const [marketRows, setMarketRows] = useState([]);
   const [ethPriceUsd, setEthPriceUsd] = useState(null);
@@ -177,8 +247,12 @@ export default function ETHWallet() {
   const [chainError, setChainError] = useState("");
   const seenTxHashesRef = useRef(new Set());
   const lastScannedBlockRef = useRef(null);
+  const shellRef = useRef(null);
+  const pointerFrameRef = useRef(null);
 
   const isConnected = Boolean(account);
+  const nativeSymbol = useMemo(() => getNativeCurrencySymbol(chainId), [chainId]);
+  const isTestnet = useMemo(() => isTestnetChain(chainId), [chainId]);
 
   const numericBalance = useMemo(() => {
     if (balance === null || balance === undefined) {
@@ -196,7 +270,17 @@ export default function ETHWallet() {
     return formatFiat(numericBalance * ethPriceUsd);
   }, [ethPriceUsd, numericBalance, isConnected]);
 
-  const qrPattern = useMemo(() => makeQRPattern(account), [account]);
+  const receiveUri = useMemo(() => {
+    if (!account) {
+      return "";
+    }
+
+    if (chainId) {
+      return `ethereum:${account}@${chainId}`;
+    }
+
+    return `ethereum:${account}`;
+  }, [account, chainId]);
 
   const appendTxHistory = useCallback((entry) => {
     setTxHistory((prev) => {
@@ -235,44 +319,58 @@ export default function ETHWallet() {
   }, [web3, account]);
 
   const loadMarketData = useCallback(async () => {
-    try {
-      const [marketResponse, ethResponse, globalResponse] = await Promise.all([
-        fetch(MARKET_ENDPOINT),
-        fetch(ETH_PRICE_ENDPOINT),
-        fetch(GLOBAL_MARKET_ENDPOINT),
-      ]);
+    const retrySeconds = Math.round(MARKET_REFRESH_MS / 1000);
 
-      if (!marketResponse.ok || !ethResponse.ok || !globalResponse.ok) {
-        throw new Error("Market API unavailable");
+    try {
+      // Fetch all three endpoints; allow partial failure (more resilient to rate limits)
+      const marketResponse = await fetch(MARKET_ENDPOINT).catch(() => null);
+      const ethResponse = await fetch(ETH_PRICE_ENDPOINT).catch(() => null);
+      const globalResponse = await fetch(GLOBAL_MARKET_ENDPOINT).catch(() => null);
+
+      let success = false;
+
+      if (marketResponse?.ok) {
+        const marketJson = await marketResponse.json();
+        const normalizedMarkets = (marketJson || []).map((item) => ({
+          id: item.id || item.symbol || "asset",
+          symbol: item.symbol?.toUpperCase() || "-",
+          name: item.name || "Unknown",
+          rank: item.market_cap_rank ?? null,
+          icon: item.image || "",
+          price: item.current_price ?? null,
+          change24h:
+            item.price_change_percentage_24h_in_currency ??
+            item.price_change_percentage_24h ??
+            null,
+          spark: sparklineBars(item.sparkline_in_7d?.price || []),
+        }));
+        setMarketRows(normalizedMarkets);
+        success = true;
       }
 
-      const [marketJson, ethJson, globalJson] = await Promise.all([
-        marketResponse.json(),
-        ethResponse.json(),
-        globalResponse.json(),
-      ]);
+      if (ethResponse?.ok) {
+        const ethJson = await ethResponse.json();
+        setEthPriceUsd(ethJson?.ethereum?.usd ?? null);
+        setEthPriceChange24h(ethJson?.ethereum?.usd_24h_change ?? null);
+        success = true;
+      }
 
-      const normalizedMarkets = (marketJson || []).map((item) => ({
-        symbol: item.symbol?.toUpperCase() || "-",
-        name: item.name || "Unknown",
-        price: item.current_price ?? null,
-        change24h:
-          item.price_change_percentage_24h_in_currency ??
-          item.price_change_percentage_24h ??
-          null,
-        spark: sparklineBars(item.sparkline_in_7d?.price || []),
-      }));
+      if (globalResponse?.ok) {
+        const globalJson = await globalResponse.json();
+        setMarketCapUsd(globalJson?.data?.total_market_cap?.usd ?? null);
+        setMarketCapChange24h(globalJson?.data?.market_cap_change_percentage_24h_usd ?? null);
+        setActiveCoins(globalJson?.data?.active_cryptocurrencies ?? null);
+        success = true;
+      }
 
-      setMarketRows(normalizedMarkets);
-      setEthPriceUsd(ethJson?.ethereum?.usd ?? null);
-      setEthPriceChange24h(ethJson?.ethereum?.usd_24h_change ?? null);
-      setMarketCapUsd(globalJson?.data?.total_market_cap?.usd ?? null);
-      setMarketCapChange24h(globalJson?.data?.market_cap_change_percentage_24h_usd ?? null);
-      setActiveCoins(globalJson?.data?.active_cryptocurrencies ?? null);
-      setMarketUpdatedAt(Date.now());
-      setMarketError("");
+      if (success) {
+        setMarketUpdatedAt(Date.now());
+        setMarketError("");
+      } else {
+        setMarketError(`Live market feed unavailable. Retrying in ${retrySeconds} seconds...`);
+      }
     } catch {
-      setMarketError("Live market feed unavailable. Retrying automatically.");
+      setMarketError(`Live market feed unavailable. Retrying in ${retrySeconds} seconds...`);
     }
   }, []);
 
@@ -393,10 +491,12 @@ export default function ETHWallet() {
           appendTxHistory({
             type: "received",
             from: tx.from,
-            amount: formatEthAmount(web3.utils.fromWei(tx.value || "0", "ether")),
+            amount: formatNativeAmount(web3.utils.fromWei(tx.value || "0", "ether")),
             hash: tx.hash,
             time: new Date((Number(block.timestamp) || Date.now() / 1000) * 1000).toLocaleTimeString(),
             network: network || getNetworkName(chainId),
+            symbol: getNativeCurrencySymbol(chainId),
+            explorerBase: getExplorerBase(chainId),
           });
         }
       }
@@ -539,7 +639,7 @@ export default function ETHWallet() {
     };
   }, [web3, account, loadChainTelemetry]);
 
-  const sendETH = useCallback(async () => {
+  const sendNative = useCallback(async () => {
     if (!web3 || !account) {
       setTxStatus({ type: "error", msg: "Connect a wallet before sending funds." });
       return;
@@ -592,21 +692,24 @@ export default function ETHWallet() {
           type: "pending",
           msg: "Transaction submitted. Waiting for block confirmation.",
           hash,
+          explorerBase: getExplorerBase(chainId),
         });
       });
 
       promi.on("receipt", async (receipt) => {
         const hash = receipt.transactionHash;
 
-        setTxStatus({ type: "success", msg: "Transaction confirmed.", hash });
+        setTxStatus({ type: "success", msg: "Transaction confirmed.", hash, explorerBase: getExplorerBase(chainId) });
         seenTxHashesRef.current.add(hash);
         appendTxHistory({
           type: "sent",
           to: toAddr,
-          amount: formatEthAmount(amount),
+          amount: formatNativeAmount(amount),
           hash,
           time: new Date().toLocaleTimeString(),
           network: network || "Unknown",
+          symbol: nativeSymbol,
+          explorerBase: getExplorerBase(chainId),
         });
 
         setToAddr("");
@@ -628,7 +731,7 @@ export default function ETHWallet() {
       setTxStatus({ type: "error", msg: error?.message || "Transaction preparation failed." });
       setSending(false);
     }
-  }, [web3, account, toAddr, amount, refreshBalance, network, appendTxHistory]);
+  }, [web3, account, toAddr, amount, refreshBalance, network, appendTxHistory, nativeSymbol, chainId]);
 
   const copyAddress = useCallback((value) => {
     if (!value) {
@@ -656,11 +759,144 @@ export default function ETHWallet() {
     [numericBalance],
   );
 
-  return (
-    <div className="dg-shell">
-      <div className="dg-background" aria-hidden="true" />
+  useEffect(() => {
+    if (!receiveUri) {
+      setReceiveQrDataUrl("");
+      setQrError("");
+      return undefined;
+    }
 
-      <header className="dg-topbar">
+    let isCancelled = false;
+
+    QRCode.toDataURL(receiveUri, {
+      errorCorrectionLevel: "H",
+      margin: 1,
+      width: 420,
+      color: {
+        dark: "#1d2d4f",
+        light: "#ffffff",
+      },
+    })
+      .then((dataUrl) => {
+        if (isCancelled) {
+          return;
+        }
+
+        setReceiveQrDataUrl(dataUrl);
+        setQrError("");
+      })
+      .catch(() => {
+        if (isCancelled) {
+          return;
+        }
+
+        setReceiveQrDataUrl("");
+        setQrError("Unable to generate QR code for this wallet address.");
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [receiveUri]);
+
+  useEffect(() => {
+    const shell = shellRef.current;
+    if (!shell || typeof window === "undefined" || !window.matchMedia) {
+      return undefined;
+    }
+
+    const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (prefersReducedMotion) {
+      shell.style.setProperty("--pointer-x", "0");
+      shell.style.setProperty("--pointer-y", "0");
+      return undefined;
+    }
+
+    const onPointerMove = (event) => {
+      const rect = shell.getBoundingClientRect();
+      if (!rect.width || !rect.height) {
+        return;
+      }
+
+      const normalizedX = (event.clientX - rect.left) / rect.width - 0.5;
+      const normalizedY = (event.clientY - rect.top) / rect.height - 0.5;
+
+      if (pointerFrameRef.current) {
+        window.cancelAnimationFrame(pointerFrameRef.current);
+      }
+
+      pointerFrameRef.current = window.requestAnimationFrame(() => {
+        shell.style.setProperty("--pointer-x", normalizedX.toFixed(4));
+        shell.style.setProperty("--pointer-y", normalizedY.toFixed(4));
+      });
+    };
+
+    const onPointerLeave = () => {
+      shell.style.setProperty("--pointer-x", "0");
+      shell.style.setProperty("--pointer-y", "0");
+    };
+
+    shell.addEventListener("pointermove", onPointerMove);
+    shell.addEventListener("pointerleave", onPointerLeave);
+
+    return () => {
+      shell.removeEventListener("pointermove", onPointerMove);
+      shell.removeEventListener("pointerleave", onPointerLeave);
+      if (pointerFrameRef.current) {
+        window.cancelAnimationFrame(pointerFrameRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    const shell = shellRef.current;
+    if (!shell) {
+      return undefined;
+    }
+
+    const revealTargets = Array.from(shell.querySelectorAll("[data-reveal]"));
+    if (revealTargets.length === 0) {
+      return undefined;
+    }
+
+    const prefersReducedMotion =
+      typeof window !== "undefined" &&
+      window.matchMedia &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    if (prefersReducedMotion || typeof IntersectionObserver === "undefined") {
+      revealTargets.forEach((element) => element.classList.add("is-visible"));
+      return undefined;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (!entry.isIntersecting) {
+            return;
+          }
+
+          entry.target.classList.add("is-visible");
+          observer.unobserve(entry.target);
+        });
+      },
+      { threshold: 0.16, rootMargin: "0px 0px -8% 0px" },
+    );
+
+    revealTargets.forEach((element) => observer.observe(element));
+    return () => observer.disconnect();
+  }, [tab, marketRows.length, txHistory.length, isConnected]);
+
+  return (
+    <div className={`dg-shell ${isConnected ? "is-connected" : "is-disconnected"}`} ref={shellRef}>
+      <div className="dg-background" aria-hidden="true">
+        <span className="dg-orb dg-orb-one" />
+        <span className="dg-orb dg-orb-two" />
+        <span className="dg-orb dg-orb-three" />
+        <span className="dg-noise-mask" />
+      </div>
+
+      <header className="dg-topbar" data-reveal style={{ "--reveal-delay": "0.03s" }}>
         <div className="dg-brand">
           <div className="dg-brand-mark">DG</div>
           <div>
@@ -670,9 +906,13 @@ export default function ETHWallet() {
         </div>
 
         <div className="dg-topbar-right">
-          <div className={`dg-network-pill ${isConnected ? "online" : "offline"}`}>
+          <div
+            className={`dg-network-pill ${isConnected ? "online" : "offline"} ${isTestnet ? "testnet" : ""}`}
+          >
             <span className="dg-network-dot" />
-            {isConnected ? network || "Connected" : "Wallet Offline"}
+            {isConnected
+              ? `${network || "Connected"}${isTestnet ? " • Testnet" : ""}`
+              : "Wallet Offline"}
           </div>
 
           {isConnected ? (
@@ -688,9 +928,15 @@ export default function ETHWallet() {
       </header>
 
       <section className="dg-metric-grid">
-        <article className="dg-metric-card dg-metric-balance">
+        <article
+          className="dg-metric-card dg-metric-balance"
+          data-reveal
+          style={{ "--reveal-delay": "0.08s" }}
+        >
           <p className="dg-metric-label">Portfolio Balance</p>
-          <h1 className="dg-balance-value">{isConnected ? `${balance} ETH` : "0.000000 ETH"}</h1>
+          <h1 className="dg-balance-value">
+            {isConnected ? `${balance} ${nativeSymbol}` : `0.000000 ${nativeSymbol}`}
+          </h1>
           <p className="dg-balance-usd">{portfolioValueUsd}</p>
 
           <div className="dg-address-row">
@@ -703,7 +949,7 @@ export default function ETHWallet() {
           </div>
         </article>
 
-        <article className="dg-metric-card">
+        <article className="dg-metric-card" data-reveal style={{ "--reveal-delay": "0.12s" }}>
           <p className="dg-metric-label">Global Crypto Market</p>
           <div className="dg-stat-row">
             <span>Total Market Cap</span>
@@ -725,11 +971,15 @@ export default function ETHWallet() {
           </div>
         </article>
 
-        <article className="dg-metric-card">
+        <article className="dg-metric-card" data-reveal style={{ "--reveal-delay": "0.16s" }}>
           <p className="dg-metric-label">Network Telemetry</p>
           <div className="dg-stat-row">
             <span>Selected Chain</span>
             <strong>{network || "Not Connected"}</strong>
+          </div>
+          <div className="dg-stat-row">
+            <span>Network Mode</span>
+            <strong>{chainId ? (isTestnet ? "Testnet" : "Mainnet") : "-"}</strong>
           </div>
           <div className="dg-stat-row">
             <span>Latest Block</span>
@@ -750,7 +1000,13 @@ export default function ETHWallet() {
       </section>
 
       {marketError ? (
-        <div className="dg-status dg-status-error" role="status" aria-live="polite">
+        <div
+          className="dg-status dg-status-error"
+          role="status"
+          aria-live="polite"
+          data-reveal
+          style={{ "--reveal-delay": "0.2s" }}
+        >
           <div className="dg-status-line">
             <span className="dg-status-dot" />
             <span>{marketError}</span>
@@ -759,7 +1015,13 @@ export default function ETHWallet() {
       ) : null}
 
       {chainError ? (
-        <div className="dg-status dg-status-error" role="status" aria-live="polite">
+        <div
+          className="dg-status dg-status-error"
+          role="status"
+          aria-live="polite"
+          data-reveal
+          style={{ "--reveal-delay": "0.22s" }}
+        >
           <div className="dg-status-line">
             <span className="dg-status-dot" />
             <span>{chainError}</span>
@@ -768,14 +1030,20 @@ export default function ETHWallet() {
       ) : null}
 
       {txStatus ? (
-        <div className={`dg-status dg-status-${txStatus.type}`} role="status" aria-live="polite">
+        <div
+          className={`dg-status dg-status-${txStatus.type}`}
+          role="status"
+          aria-live="polite"
+          data-reveal
+          style={{ "--reveal-delay": "0.24s" }}
+        >
           <div className="dg-status-line">
             <span className="dg-status-dot" />
             <span>{txStatus.msg}</span>
           </div>
           {txStatus.hash ? (
             <a
-              href={`${getExplorerBase(chainId)}/tx/${txStatus.hash}`}
+              href={`${txStatus.explorerBase || getExplorerBase(chainId)}/tx/${txStatus.hash}`}
               target="_blank"
               rel="noreferrer noopener"
             >
@@ -787,43 +1055,84 @@ export default function ETHWallet() {
 
       <main className="dg-main-grid">
         <section className="dg-panel-column">
-          <article className="dg-panel">
+          <article className="dg-panel" data-reveal style={{ "--reveal-delay": "0.28s" }}>
             <div className="dg-panel-head">
               <h2>Market Pulse</h2>
-              <p>Live market feed refreshes every 30 seconds</p>
+              <p>Live market feed refreshes every {MARKET_REFRESH_MS / 1000} seconds</p>
             </div>
 
             <div className="dg-market-list">
               {marketRows.length === 0 ? (
                 <p className="dg-empty">Waiting for live market data...</p>
               ) : (
-                marketRows.map((asset) => {
-                  const isPositive = (asset.change24h ?? 0) >= 0;
-                  return (
-                    <div className="dg-market-row" key={asset.symbol}>
-                      <div>
-                        <p className="dg-asset-symbol">{asset.symbol}</p>
-                        <p className="dg-asset-name">{asset.name}</p>
+                <>
+                  <div className="dg-coin-strip" aria-label="Live coin thumbnails">
+                    {marketRows.map((asset, assetIndex) => (
+                      <div
+                        className="dg-coin-chip"
+                        key={`chip-${asset.id}-${assetIndex}`}
+                        style={{ "--row-delay": `${assetIndex * 0.04}s` }}
+                      >
+                        <div className="dg-coin-avatar">
+                          {asset.icon ? (
+                            <img src={asset.icon} alt={`${asset.name} icon`} loading="lazy" />
+                          ) : (
+                            <span>{asset.symbol?.slice(0, 1) || "C"}</span>
+                          )}
+                        </div>
+                        <span>{asset.symbol}</span>
                       </div>
+                    ))}
+                  </div>
 
-                      <div className="dg-market-sparkline" aria-hidden="true">
-                        {asset.spark.map((height, index) => (
-                          <span key={`${asset.symbol}-${index}`} style={{ height: `${height}%` }} />
-                        ))}
-                      </div>
+                  {marketRows.map((asset, assetIndex) => {
+                    const isPositive = (asset.change24h ?? 0) >= 0;
+                    return (
+                      <div
+                        className="dg-market-row"
+                        key={asset.id || asset.symbol}
+                        style={{ "--row-delay": `${assetIndex * 0.05}s` }}
+                      >
+                        <div className="dg-asset-head">
+                          <div className="dg-asset-thumb">
+                            {asset.icon ? (
+                              <img src={asset.icon} alt={`${asset.name} icon`} loading="lazy" />
+                            ) : (
+                              <span>{asset.symbol?.slice(0, 1) || "C"}</span>
+                            )}
+                          </div>
 
-                      <div className="dg-market-right">
-                        <p className="dg-asset-price">{asset.price ? formatFiat(asset.price) : "-"}</p>
-                        <p className={isPositive ? "dg-up" : "dg-down"}>{formatPercent(asset.change24h)}</p>
+                          <div className="dg-asset-meta">
+                            <p className="dg-asset-symbol">{asset.symbol}</p>
+                            <p className="dg-asset-name">{asset.name}</p>
+                          </div>
+                        </div>
+
+                        <div className="dg-market-sparkline" aria-hidden="true">
+                          {asset.spark.map((height, index) => (
+                            <span
+                              key={`${asset.symbol}-${index}`}
+                              style={{ height: `${height}%`, "--bar-index": index }}
+                            />
+                          ))}
+                        </div>
+
+                        <div className="dg-market-right">
+                          <p className="dg-asset-price">{asset.price ? formatFiat(asset.price) : "-"}</p>
+                          <p className={isPositive ? "dg-up" : "dg-down"}>{formatPercent(asset.change24h)}</p>
+                          <small className="dg-asset-rank">
+                            {asset.rank ? `Rank #${asset.rank}` : "Rank -"}
+                          </small>
+                        </div>
                       </div>
-                    </div>
-                  );
-                })
+                    );
+                  })}
+                </>
               )}
             </div>
           </article>
 
-          <article className="dg-panel">
+          <article className="dg-panel" data-reveal style={{ "--reveal-delay": "0.32s" }}>
             <div className="dg-panel-head">
               <h2>ETH Live Metrics</h2>
               <p>Realtime Ethereum pricing snapshot</p>
@@ -841,7 +1150,7 @@ export default function ETHWallet() {
             </div>
             <div className="dg-stat-row">
               <span>Auto Refresh</span>
-              <strong>30s</strong>
+              <strong>{MARKET_REFRESH_MS / 1000}s</strong>
             </div>
             <div className="dg-stat-row">
               <span>Source</span>
@@ -849,10 +1158,10 @@ export default function ETHWallet() {
             </div>
           </article>
 
-          <article className="dg-panel">
+          <article className="dg-panel" data-reveal style={{ "--reveal-delay": "0.36s" }}>
             <div className="dg-panel-head">
               <h2>Activity Feed</h2>
-              <p>Recent wallet events</p>
+              <p>Recent wallet events across connected networks</p>
             </div>
 
             {txHistory.length === 0 ? (
@@ -860,10 +1169,14 @@ export default function ETHWallet() {
             ) : (
               <div className="dg-activity-list">
                 {txHistory.slice(0, 5).map((tx, index) => (
-                  <div className="dg-activity-row" key={`${tx.hash}-${index}`}>
+                  <div
+                    className="dg-activity-row"
+                    key={`${tx.hash}-${index}`}
+                    style={{ "--row-delay": `${index * 0.06}s` }}
+                  >
                     <div>
                       <p className="dg-activity-title">
-                        {tx.type === "received" ? "Received" : "Sent"} {tx.amount} ETH
+                        {tx.type === "received" ? "Received" : "Sent"} {tx.amount} {tx.symbol || nativeSymbol}
                       </p>
                       <p className="dg-activity-sub">
                         {tx.type === "received"
@@ -883,15 +1196,46 @@ export default function ETHWallet() {
         </section>
 
         <section className="dg-panel-column">
-          <article className="dg-panel dg-wallet-panel">
+          <article
+            className="dg-panel dg-wallet-panel"
+            data-reveal
+            style={{ "--reveal-delay": "0.4s" }}
+          >
             <div className="dg-panel-head">
               <h2>Wallet Operations</h2>
               <p>Secure transfer and receiving controls</p>
             </div>
 
+            <div className="dg-action-grid">
+              <button
+                type="button"
+                className="dg-action-btn"
+                onClick={refreshBalance}
+                disabled={!isConnected}
+              >
+                <span>Sync Wallet</span>
+                <small>Refresh balance and telemetry</small>
+              </button>
+              <button
+                type="button"
+                className="dg-action-btn"
+                onClick={() => {
+                  if (!isConnected) {
+                    return;
+                  }
+                  setTab("receive");
+                  setTxStatus({ type: "info", msg: "Receive panel opened for quick sharing." });
+                }}
+                disabled={!isConnected}
+              >
+                <span>Request Funds</span>
+                <small>Open receive QR and payment URI</small>
+              </button>
+            </div>
+
             {!isConnected ? (
               <div className="dg-connect-state">
-                <p>Connect MetaMask to activate transfer tools and monitoring panels.</p>
+                <p>Connect MetaMask for mainnet and testnet transfers (Sepolia, Base Sepolia, Amoy, Fuji, more).</p>
                 <button className="dg-btn dg-btn-primary" onClick={connectWallet} disabled={isConnecting}>
                   {isConnecting ? "Connecting..." : "Connect Wallet"}
                 </button>
@@ -921,7 +1265,7 @@ export default function ETHWallet() {
                 </div>
 
                 {tab === "send" ? (
-                  <div className="dg-form-area">
+                  <div className="dg-form-area dg-tab-panel">
                     <label className="dg-label" htmlFor="recipient-address">
                       Recipient Address
                     </label>
@@ -955,7 +1299,7 @@ export default function ETHWallet() {
                           setAmtError(false);
                         }}
                       />
-                      <span>ETH</span>
+                      <span>{nativeSymbol}</span>
                     </div>
                     {amtError ? <p className="dg-field-error">Enter a valid amount.</p> : null}
 
@@ -971,42 +1315,58 @@ export default function ETHWallet() {
                       </button>
                     </div>
 
-                    <p className="dg-helper">Available: {balance} ETH</p>
+                    <p className="dg-helper">
+                      Available: {balance} {nativeSymbol}
+                    </p>
 
                     <button
                       className="dg-btn dg-btn-primary"
-                      onClick={sendETH}
+                      onClick={sendNative}
                       disabled={isSending || !toAddr || !amount}
                     >
-                      {isSending ? "Sending..." : `Send ${amount || "0"} ETH`}
+                      {isSending ? "Sending..." : `Send ${amount || "0"} ${nativeSymbol}`}
                     </button>
                   </div>
                 ) : null}
 
                 {tab === "receive" ? (
-                  <div className="dg-receive-area">
-                    <p className="dg-helper">Share this address to receive ETH and ERC-20 tokens.</p>
+                  <div className="dg-receive-area dg-tab-panel">
+                    <p className="dg-helper">
+                      Scan to receive {nativeSymbol}. This address can also receive supported ERC-20 tokens.
+                    </p>
 
-                    <div className="dg-qr-grid" aria-hidden="true">
-                      {qrPattern.map((filled, index) => (
-                        <span key={`qr-${index}`} className={filled ? "fill" : ""} />
-                      ))}
+                    <div className="dg-qr-grid" role="img" aria-label={`Receive QR for ${account}`}>
+                      {receiveQrDataUrl ? (
+                        <img className="dg-qr-image" src={receiveQrDataUrl} alt="Wallet receive QR code" />
+                      ) : (
+                        <p className="dg-qr-placeholder">{qrError || "Generating secure QR code..."}</p>
+                      )}
                     </div>
 
+                    <p className="dg-helper dg-helper-break">Payment URI: {receiveUri || "-"}</p>
                     <p className="dg-address-full">{account}</p>
-                    <button className="dg-btn dg-btn-quiet" onClick={() => copyAddress(account)}>
-                      {copied ? "Address Copied" : "Copy Address"}
-                    </button>
+                    <div className="dg-shortcuts">
+                      <button type="button" onClick={() => copyAddress(account)}>
+                        {copied ? "Address Copied" : "Copy Address"}
+                      </button>
+                      <button type="button" onClick={() => copyAddress(receiveUri)} disabled={!receiveUri}>
+                        {copied ? "URI Copied" : "Copy URI"}
+                      </button>
+                    </div>
                   </div>
                 ) : null}
 
                 {tab === "history" ? (
-                  <div className="dg-history-area">
+                  <div className="dg-history-area dg-tab-panel">
                     {txHistory.length === 0 ? (
                       <p className="dg-empty">No transactions found.</p>
                     ) : (
                       txHistory.map((tx, index) => (
-                        <div className="dg-history-row" key={`${tx.hash}-${index}`}>
+                        <div
+                          className="dg-history-row"
+                          key={`${tx.hash}-${index}`}
+                          style={{ "--row-delay": `${index * 0.05}s` }}
+                        >
                           <div>
                             <p className="dg-history-title">{tx.type === "sent" ? "Sent" : "Received"}</p>
                             <p className="dg-history-sub">
@@ -1016,10 +1376,13 @@ export default function ETHWallet() {
                             </p>
                           </div>
                           <div className="dg-history-right">
-                            <strong>{tx.type === "sent" ? "-" : "+"}{tx.amount} ETH</strong>
+                            <strong>
+                              {tx.type === "sent" ? "-" : "+"}
+                              {tx.amount} {tx.symbol || nativeSymbol}
+                            </strong>
                             {tx.hash ? (
                               <a
-                                href={`${getExplorerBase(chainId)}/tx/${tx.hash}`}
+                                href={`${tx.explorerBase || getExplorerBase(chainId)}/tx/${tx.hash}`}
                                 target="_blank"
                                 rel="noreferrer noopener"
                               >
@@ -1038,7 +1401,7 @@ export default function ETHWallet() {
         </section>
       </main>
 
-      <footer className="dg-footer">
+      <footer className="dg-footer" data-reveal style={{ "--reveal-delay": "0.45s" }}>
         DefiGuard Pro UI with live CoinGecko market data and live Web3 network telemetry.
       </footer>
     </div>
