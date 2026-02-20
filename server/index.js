@@ -1,9 +1,5 @@
 const express = require("express");
 const cors = require("cors");
-const mongoose = require("mongoose");
-const authRoutes = require("./routes/auth");
-const messageRoutes = require("./routes/messages");
-const { getCookie } = require("./errorHandler");
 const app = express();
 const socket = require("socket.io");
 require("dotenv").config();
@@ -27,13 +23,11 @@ app.get("/ping", (_req, res) => {
   return res.json({ msg: "Ping Successful" });
 });
 
-// app.use("/api/auth", authRoutes);
-// app.use("/api/messages", messageRoutes);
+const PORT = Number(process.env.PORT) || 3003;
+const HOST = process.env.HOST || "127.0.0.1";
 
-getCookie();
-
-const server = app.listen(3003, () =>
-  console.log(`Server started on 3003`)
+const server = app.listen(PORT, HOST, () =>
+  console.log(`Server started on http://${HOST}:${PORT}`)
 );
 const io = socket(server, {
   cors: {
